@@ -2,7 +2,6 @@ import AppKit
 
 final class Column {
     let window: AXWindow
-    /// Fraction of the usable screen width; 1 means full width.
     var width: CGFloat
 
     init(_ window: AXWindow, width: CGFloat) {
@@ -14,7 +13,6 @@ final class Column {
 final class Workspace {
     var columns: [Column] = []
     var floating: [AXWindow] = []
-    /// Horizontal offset of the viewport into the row, in points.
     var scroll: CGFloat = 0
     var focused: AXWindow?
 
@@ -35,7 +33,6 @@ final class Workspace {
 
 final class Display {
     let id: CGDirectDisplayID
-    /// Frames are in Accessibility coordinates: origin at the top left of the main screen, y down.
     var frame: CGRect
     var visibleFrame: CGRect
     var workspaces: [Workspace]

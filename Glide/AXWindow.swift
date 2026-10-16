@@ -1,8 +1,6 @@
 import AppKit
 import ApplicationServices
 
-/// A window seen through the Accessibility API. Identity follows `CFEqual`, so two
-/// references obtained separately for the same window compare equal.
 struct AXWindow: Hashable {
     let element: AXUIElement
     let pid: pid_t
@@ -27,8 +25,6 @@ struct AXWindow: Hashable {
     var isFullScreen: Bool { AX.bool(element, "AXFullScreen") ?? false }
     var isAlive: Bool { AX.string(element, kAXRoleAttribute) != nil }
 
-    /// Standard, resizable, movable windows of regular apps. Dialogs, panels and
-    /// sheets are left alone.
     var isTileable: Bool {
         guard AX.string(element, kAXRoleAttribute) == kAXWindowRole,
               AX.string(element, kAXSubroleAttribute) == kAXStandardWindowSubrole,
@@ -38,7 +34,6 @@ struct AXWindow: Hashable {
         return true
     }
 
-    /// Returns true when the size had to change.
     @discardableResult
     func setFrame(_ target: CGRect, current: CGRect?) -> Bool {
         let sizeChanged = current.map { abs($0.width - target.width) > 0.5 || abs($0.height - target.height) > 0.5 } ?? true
@@ -48,8 +43,6 @@ struct AXWindow: Hashable {
         let app = AXUIElementCreateApplication(pid)
         let enhanced = AX.bool(app, "AXEnhancedUserInterface") ?? false
         if enhanced { AX.set(app, "AXEnhancedUserInterface", kCFBooleanFalse) }
-        // Size, then position, then size again: macOS clamps sizes against the
-        // screen edge relative to the old position.
         if sizeChanged { AX.setSize(element, target.size) }
         if originChanged || sizeChanged { AX.setPoint(element, target.origin) }
         if sizeChanged { AX.setSize(element, target.size) }

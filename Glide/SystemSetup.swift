@@ -16,8 +16,6 @@ enum SystemSetup {
         open("x-apple.systempreferences:com.apple.Trackpad-Settings.extension")
     }
 
-    /// Whether macOS has a horizontal swipe gesture bound to the same finger count,
-    /// which would switch desktops instead of sliding the row. Read-only.
     static func systemUsesHorizontalSwipe(fingers: Int) -> Bool {
         let key = fingers == 3 ? "TrackpadThreeFingerHorizSwipeGesture" : "TrackpadFourFingerHorizSwipeGesture"
         let domains = ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"]

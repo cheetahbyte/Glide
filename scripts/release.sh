@@ -1,6 +1,4 @@
 #!/bin/bash
-# Usage: scripts/release.sh path/to/notarized/Glide.app
-# Zips the app, signs the zip for Sparkle and adds it to appcast.xml.
 set -euo pipefail
 
 app="${1:?Pass the notarized Glide.app exported from Xcode}"

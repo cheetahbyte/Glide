@@ -1,7 +1,6 @@
 import Combine
 import SwiftUI
 
-/// First-launch setup and the "Mac Setup" check: permission, trackpad, and the core shortcuts.
 struct SetupView: View {
     @ObservedObject var prefs = Preferences.shared
     @State private var trusted = SystemSetup.isAccessibilityTrusted

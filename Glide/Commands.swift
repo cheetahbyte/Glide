@@ -89,7 +89,6 @@ enum Shortcuts {
         kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9,
     ]
 
-    /// Shortcuts shown in the menu and settings, in display order.
     static let primary: [Shortcut] = {
         var list: [Shortcut] = []
         for (direction, key) in arrowKeys {
@@ -119,7 +118,6 @@ enum Shortcuts {
         }
     }
 
-    /// Every registered hotkey, including the H and L alternatives.
     static func all(workspaceCount: Int) -> [Shortcut] {
         var list = primary
         for (direction, key) in vimKeys {

@@ -9,10 +9,8 @@ final class TilingManager {
     private(set) var isRunning = false
     private var displays: [Display] = []
     private var observers: [pid_t: AXObserver] = [:]
-    /// Minimized, full-screen or hidden-app windows, revived when they come back.
     private var dormant: Set<AXWindow> = []
     private var parked: [AXWindow: CGRect] = [:]
-    /// The last on-screen frame Glide gave each window, to tell user drags from our own moves.
     private var placed: [AXWindow: CGRect] = [:]
     private var observedWindows: Set<AXWindow> = []
     private var floatingFrames: [AXWindow: CGRect] = [:]
@@ -21,7 +19,6 @@ final class TilingManager {
     private var swipeDisplay: Display?
     private var pendingSwipe: CGFloat = 0
     private var swipeFlushScheduled = false
-    /// Scroll speed in points per second, used to pick where the row comes to rest.
     private var swipeVelocity: CGFloat = 0
     private var lastSwipeTime: TimeInterval = 0
     private var settleTimer: Timer?
@@ -31,12 +28,9 @@ final class TilingManager {
 
     private var gap: CGFloat { CGFloat(prefs.gap) }
 
-    // MARK: Lifecycle
-
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        // Short, so one hung app cannot stall hotkeys and swiping for long.
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
         rebuildDisplays()
         adoptExistingWindows()
@@ -58,7 +52,6 @@ final class TilingManager {
         reconcileTimer = timer
     }
 
-    /// Stops managing windows and brings every hidden window back on screen.
     func stop() {
         guard isRunning else { return }
         isRunning = false
@@ -99,8 +92,6 @@ final class TilingManager {
         notificationTokens.append((center, token))
     }
 
-    // MARK: Settings
-
     func preferencesChanged() {
         guard isRunning else { return }
         for display in displays { resizeWorkspaces(of: display, to: prefs.workspaceCount) }
@@ -118,8 +109,6 @@ final class TilingManager {
         display.workspaces.removeLast(display.workspaces.count - count)
         display.activeIndex = min(display.activeIndex, count - 1)
     }
-
-    // MARK: Displays
 
     private func rebuildDisplays() {
         var updated: [Display] = []
@@ -176,8 +165,6 @@ final class TilingManager {
 
     private func isManaged(_ window: AXWindow) -> Bool { location(of: window) != nil }
 
-    // MARK: Apps and windows
-
     private func regularApps() -> [NSRunningApplication] {
         let own = ProcessInfo.processInfo.processIdentifier
         return NSWorkspace.shared.runningApplications.filter {
@@ -204,7 +191,6 @@ final class TilingManager {
         let app = AXUIElementCreateApplication(pid)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let result = AXObserverAddNotification(observer, app, kAXWindowCreatedNotification as CFString, refcon)
-        // Apps that just launched may not answer yet; the next reconcile retries.
         guard result == .success || result == .notificationAlreadyRegistered else { return nil }
         AXObserverAddNotification(observer, app, kAXFocusedWindowChangedNotification as CFString, refcon)
         AXObserverAddNotification(observer, app, kAXMainWindowChangedNotification as CFString, refcon)
@@ -230,7 +216,6 @@ final class TilingManager {
 
     private func handle(_ notification: String, _ element: AXUIElement) {
         guard isRunning else { return }
-        // Destroyed elements may no longer report a pid; identity does not depend on it.
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
         let window = AXWindow(element: element, pid: pid)
@@ -304,7 +289,6 @@ final class TilingManager {
         }
     }
 
-    /// Adopts new or revived windows of one app.
     private func scan(_ pid: pid_t) {
         guard isRunning, isRegularApp(pid) else { return }
         if NSRunningApplication(processIdentifier: pid)?.isHidden == true { return }
@@ -324,7 +308,6 @@ final class TilingManager {
         }
     }
 
-    /// Safety net for notifications that apps fail to send.
     private func reconcile() {
         guard isRunning else { return }
         let apps = regularApps()
@@ -350,12 +333,10 @@ final class TilingManager {
             dormant.remove(window)
             insert(window)
         } else if attempt < 3 {
-            // Some apps set the subrole or size attributes a moment after creation.
             after([0.1, 0.3, 1.0][attempt]) { [weak self] in self?.windowCreated(window, attempt: attempt + 1) }
         }
     }
 
-    /// Places a new window right after the focused column on the display it opened on.
     private func insert(_ window: AXWindow, on target: Display? = nil, width: CGFloat = TilingManager.newWindowWidth) {
         guard let display = target ?? window.frame.flatMap({ display(containing: CGPoint(x: $0.midX, y: $0.midY)) }) ?? displays.first
         else { return }
@@ -417,8 +398,6 @@ final class TilingManager {
         }
     }
 
-    // MARK: Focus and dragging
-
     private func systemFocusedWindow() -> AXWindow? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         return AX.focusedWindow(of: app.processIdentifier)
@@ -457,7 +436,6 @@ final class TilingManager {
             revive(window)
             return
         }
-        // Only mouse drags count as user changes; everything else is our own layout.
         guard NSEvent.pressedMouseButtons != 0, isManaged(window) else { return }
         draggedWindows.insert(window)
         guard dragTimer == nil else { return }
@@ -502,8 +480,6 @@ final class TilingManager {
         }
         layout(display)
     }
-
-    // MARK: Commands
 
     func perform(_ command: Command) {
         cancelSettle()
@@ -575,7 +551,6 @@ final class TilingManager {
         }
     }
 
-    /// The focused managed window, or the remembered focus on the display under the mouse.
     private func commandTarget() -> (Display, Workspace, AXWindow?)? {
         if let window = systemFocusedWindow(), let (display, workspace) = location(of: window), workspace === display.active {
             workspace.focused = window
@@ -680,8 +655,6 @@ final class TilingManager {
         layout(display)
     }
 
-    // MARK: Trackpad
-
     func swipeBegan() {
         guard isRunning else { return }
         cancelSettle()
@@ -691,11 +664,9 @@ final class TilingManager {
         swipeDisplay = displayUnderMouse()
     }
 
-    /// `delta` is the finger movement in trackpad widths; positive is rightwards.
     func swipeMoved(by delta: CGFloat) {
         guard isRunning, swipeDisplay != nil else { return }
         pendingSwipe += delta
-        // Gesture events arrive faster than windows can follow; apply them once per run loop pass.
         guard !swipeFlushScheduled else { return }
         swipeFlushScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -736,7 +707,6 @@ final class TilingManager {
         pendingSwipe = 0
         let workspace = display.active
         let viewport = viewport(of: display)
-        // Fingers that stopped before lifting carry no momentum.
         if ProcessInfo.processInfo.systemUptime - lastSwipeTime > 0.08 { swipeVelocity = 0 }
         let projected = workspace.scroll + swipeVelocity * 0.12
         let target = snapPoints(workspace, viewport).min { abs($0 - projected) < abs($1 - projected) } ?? workspace.scroll
@@ -747,7 +717,6 @@ final class TilingManager {
         }
     }
 
-    /// Positions where a column lines up with the left edge, plus the end of the row.
     private func snapPoints(_ workspace: Workspace, _ viewport: CGRect) -> [CGFloat] {
         guard let last = workspace.columns.indices.last else { return [0] }
         let lefts = columnLefts(workspace, viewport)
@@ -790,8 +759,6 @@ final class TilingManager {
         settleTimer = nil
     }
 
-    /// Keeps focus on screen without moving the row: if the focused column scrolled
-    /// out of full view, the leftmost fully visible column takes focus.
     private func focusVisibleColumn(in workspace: Workspace, on display: Display) {
         let viewport = viewport(of: display)
         let lefts = columnLefts(workspace, viewport)
@@ -810,8 +777,6 @@ final class TilingManager {
     private func haptic() {
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
     }
-
-    // MARK: Geometry
 
     private func viewport(of display: Display) -> CGRect {
         display.visibleFrame.insetBy(dx: gap, dy: gap)
@@ -852,7 +817,6 @@ final class TilingManager {
         }
     }
 
-    /// Allows scrolling until the first or last column sits in the centre, never further.
     private func scrollBounds(_ workspace: Workspace, _ viewport: CGRect) -> ClosedRange<CGFloat>? {
         guard let lastIndex = workspace.columns.indices.last else { return nil }
         let lefts = columnLefts(workspace, viewport)
@@ -872,16 +836,10 @@ final class TilingManager {
         workspace.scroll = min(max(workspace.scroll, bounds.lowerBound), bounds.upperBound)
     }
 
-    // MARK: Applying frames
-
     private func layoutAll() {
         displays.forEach { layout($0) }
     }
 
-    /// `sliding` is the swipe fast path: only positions in the active workspace change.
-    /// `movingRight` orders the updates so each window leaves before its neighbour arrives.
-    /// While sliding, each column is also held back behind where its neighbour actually is,
-    /// so an app that is slow to move cannot be overlapped.
     private func layout(_ display: Display, pass: Int = 0, sliding: Bool = false, movingRight: Bool = false) {
         guard isRunning else { return }
         let viewport = viewport(of: display)
@@ -934,7 +892,6 @@ final class TilingManager {
         }
     }
 
-    /// Returns true when the window refused the width and its column was widened to fit.
     @discardableResult
     private func place(_ window: AXWindow, _ frame: CGRect, in column: Column?, _ viewport: CGRect) -> Bool {
         parked.removeValue(forKey: window)
@@ -947,7 +904,6 @@ final class TilingManager {
         return true
     }
 
-    /// Moves a window without reading its frame back, trusting the last frame Glide set.
     private func slide(_ window: AXWindow, to frame: CGRect, in column: Column, _ viewport: CGRect) {
         guard let known = parked[window] ?? placed[window], known.size == frame.size else {
             place(window, frame, in: column, viewport)
@@ -960,7 +916,6 @@ final class TilingManager {
 
     private enum ParkSide { case left, right, corner }
 
-    /// Moves a window off screen, leaving one point visible so macOS keeps it where we put it.
     private func park(_ window: AXWindow, on display: Display, side: ParkSide, size: CGSize? = nil, sliding: Bool = false) {
         guard let size = size ?? parked[window]?.size ?? window.size else { return }
         let screen = display.frame

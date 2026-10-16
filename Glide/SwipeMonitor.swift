@@ -1,10 +1,8 @@
 import AppKit
 import CoreGraphics
 
-/// Watches raw trackpad touches through a pass-through event tap and reports
-/// horizontal multi-finger swipes. Events are never modified or swallowed.
 final class SwipeMonitor {
-    private static let gestureEventType: UInt32 = 29 // NSEvent.EventType.gesture
+    private static let gestureEventType: UInt32 = 29
 
     var fingers = 4
     var onBegan: () -> Void = {}

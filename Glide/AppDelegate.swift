@@ -42,8 +42,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         stopEngine()
     }
 
-    // MARK: Engine
-
     private func startWhenTrusted() {
         trustTimer?.invalidate()
         trustTimer = nil
@@ -102,8 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             startWhenTrusted()
         }
     }
-
-    // MARK: Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -166,8 +162,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         Shortcuts.primary + Shortcuts.workspaceShortcuts(count: prefs.workspaceCount)
     }
 
-    // MARK: Windows
-
     @objc private func showSettings() {
         if settingsWindow == nil {
             settingsWindow = makeWindow(title: "Glide Settings", content: SettingsView())
@@ -196,7 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         return window
     }
 
-    /// Frees the SwiftUI views and their timers once a window is closed.
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
         if window === settingsWindow { settingsWindow = nil }

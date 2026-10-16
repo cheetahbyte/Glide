@@ -2,7 +2,7 @@ import Carbon.HIToolbox
 import Foundation
 
 final class HotKeys {
-    private static let signature: OSType = 0x474C_4944 // "GLID"
+    private static let signature: OSType = 0x474C_4944
 
     private var refs: [EventHotKeyRef] = []
     private var commands: [UInt32: Command] = [:]
