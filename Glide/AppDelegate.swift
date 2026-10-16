@@ -118,8 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let header = NSMenuItem(title: "Shortcuts", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
-        let shortcuts = Shortcuts.primary + Shortcuts.workspaceShortcuts(count: prefs.workspaceCount)
-        for (index, shortcut) in shortcuts.enumerated() {
+        for (index, shortcut) in menuShortcuts.enumerated() {
             let entry = item(shortcut.command.title, #selector(runShortcut(_:)))
             entry.keyEquivalent = shortcut.key.menuKeyEquivalent
             entry.keyEquivalentModifierMask = modifierFlags(shift: shortcut.shift)
@@ -159,9 +158,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     }
 
     @objc private func runShortcut(_ sender: NSMenuItem) {
-        let shortcuts = Shortcuts.primary + Shortcuts.workspaceShortcuts(count: prefs.workspaceCount)
-        guard shortcuts.indices.contains(sender.tag) else { return }
-        manager.perform(shortcuts[sender.tag].command)
+        guard menuShortcuts.indices.contains(sender.tag) else { return }
+        manager.perform(menuShortcuts[sender.tag].command)
+    }
+
+    private var menuShortcuts: [Shortcut] {
+        Shortcuts.primary + Shortcuts.workspaceShortcuts(count: prefs.workspaceCount)
     }
 
     // MARK: Windows

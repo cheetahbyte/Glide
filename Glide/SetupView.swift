@@ -27,10 +27,7 @@ struct SetupView: View {
                 Text("Glide needs this one permission to move and resize windows. It changes no system settings.")
                     .foregroundStyle(.secondary)
                 if !trusted {
-                    Button("Open Accessibility Settings…") {
-                        SystemSetup.requestAccessibility()
-                        SystemSetup.openAccessibilitySettings()
-                    }
+                    AccessibilityButton()
                 }
             }
 
@@ -45,12 +42,7 @@ struct SetupView: View {
             step(number: 3, title: "Learn the core shortcuts", done: true) {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                     ForEach(Array(coreShortcuts.enumerated()), id: \.offset) { _, shortcut in
-                        GridRow {
-                            Text(shortcut.label(modifier: prefs.modifier))
-                                .font(.system(.body, design: .monospaced))
-                                .gridColumnAlignment(.trailing)
-                            Text(shortcut.command.title)
-                        }
+                        ShortcutRow(keys: shortcut.label(modifier: prefs.modifier), title: shortcut.command.title)
                     }
                 }
                 Text("Every shortcut is listed in the menu bar icon.")

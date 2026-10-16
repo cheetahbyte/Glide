@@ -119,7 +119,7 @@ enum Shortcuts {
         }
     }
 
-    /// Every registered hotkey, including the H/J/K/L alternatives.
+    /// Every registered hotkey, including the H and L alternatives.
     static func all(workspaceCount: Int) -> [Shortcut] {
         var list = primary
         for (direction, key) in vimKeys {

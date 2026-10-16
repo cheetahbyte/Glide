@@ -15,10 +15,7 @@ struct SettingsView: View {
                     if trusted {
                         Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     } else {
-                        Button("Open Accessibility Settings…") {
-                            SystemSetup.requestAccessibility()
-                            SystemSetup.openAccessibilitySettings()
-                        }
+                        AccessibilityButton()
                     }
                 }
             }
@@ -84,19 +81,33 @@ struct ShortcutList: View {
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
             ForEach(Array(Shortcuts.primary.enumerated()), id: \.offset) { _, shortcut in
-                row(shortcut.label(modifier: modifier), shortcut.command.title)
+                ShortcutRow(keys: shortcut.label(modifier: modifier), title: shortcut.command.title)
             }
-            row("\(modifier.symbol)1–\(workspaceCount)", "Switch to workspace 1 to \(workspaceCount)")
-            row("\(modifier.symbol)⇧1–\(workspaceCount)", "Move the window to workspace 1 to \(workspaceCount)")
+            ShortcutRow(keys: "\(modifier.symbol)1–\(workspaceCount)", title: "Switch to workspace 1 to \(workspaceCount)")
+            ShortcutRow(keys: "\(modifier.symbol)⇧1–\(workspaceCount)", title: "Move the window to workspace 1 to \(workspaceCount)")
         }
     }
+}
 
-    private func row(_ keys: String, _ title: String) -> some View {
+struct ShortcutRow: View {
+    let keys: String
+    let title: String
+
+    var body: some View {
         GridRow {
             Text(keys)
                 .font(.system(.body, design: .monospaced))
                 .gridColumnAlignment(.trailing)
             Text(title)
+        }
+    }
+}
+
+struct AccessibilityButton: View {
+    var body: some View {
+        Button("Open Accessibility Settings…") {
+            SystemSetup.requestAccessibility()
+            SystemSetup.openAccessibilitySettings()
         }
     }
 }

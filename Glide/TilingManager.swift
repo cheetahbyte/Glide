@@ -567,8 +567,7 @@ final class TilingManager {
             layout(display)
 
         case .center:
-            let left = columnLefts(workspace, viewport)[columnIndex]
-            workspace.scroll = left + pixelWidth(column.width, viewport) / 2 - viewport.width / 2
+            workspace.scroll = columnCenters(workspace, viewport)[columnIndex] - viewport.width / 2
             layout(display)
 
         default:
@@ -598,12 +597,9 @@ final class TilingManager {
 
     private func focusNearestColumn(in workspace: Workspace, on display: Display) {
         let viewport = viewport(of: display)
-        let lefts = columnLefts(workspace, viewport)
+        let centers = columnCenters(workspace, viewport)
         let center = workspace.scroll + viewport.width / 2
-        let nearest = workspace.columns.indices.min { a, b in
-            abs(lefts[a] + pixelWidth(workspace.columns[a].width, viewport) / 2 - center)
-                < abs(lefts[b] + pixelWidth(workspace.columns[b].width, viewport) / 2 - center)
-        }
+        let nearest = centers.indices.min { abs(centers[$0] - center) < abs(centers[$1] - center) }
         if let nearest { focus(workspace.columns[nearest].window, in: workspace, on: display) }
     }
 
@@ -621,8 +617,7 @@ final class TilingManager {
         } else if let index = workspace.floating.firstIndex(of: window) {
             workspace.floating.remove(at: index)
             let center = (window.frame?.midX ?? viewport.midX) - viewport.minX + workspace.scroll
-            let lefts = columnLefts(workspace, viewport)
-            let insertAt = workspace.columns.indices.filter { lefts[$0] + pixelWidth(workspace.columns[$0].width, viewport) / 2 < center }.count
+            let insertAt = columnCenters(workspace, viewport).filter { $0 < center }.count
             workspace.columns.insert(Column(window, width: Self.newWindowWidth), at: insertAt)
             ensureVisible(insertAt, in: workspace, on: display)
             layout(display)
@@ -752,10 +747,6 @@ final class TilingManager {
         }
     }
 
-    private func settleDuration(_ distance: CGFloat) -> TimeInterval {
-        min(0.28, max(0.14, distance / 2500))
-    }
-
     /// Positions where a column lines up with the left edge, plus the end of the row.
     private func snapPoints(_ workspace: Workspace, _ viewport: CGRect) -> [CGFloat] {
         guard let last = workspace.columns.indices.last else { return [0] }
@@ -774,7 +765,7 @@ final class TilingManager {
             completion()
             return
         }
-        let duration = settleDuration(abs(distance))
+        let duration = min(0.28, max(0.14, abs(distance) / 2500))
         let began = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -839,6 +830,12 @@ final class TilingManager {
         return workspace.columns.map { column in
             defer { x += pixelWidth(column.width, viewport) + gap }
             return x
+        }
+    }
+
+    private func columnCenters(_ workspace: Workspace, _ viewport: CGRect) -> [CGFloat] {
+        zip(columnLefts(workspace, viewport), workspace.columns).map { left, column in
+            left + pixelWidth(column.width, viewport) / 2
         }
     }
 
