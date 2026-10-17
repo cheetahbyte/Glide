@@ -361,7 +361,7 @@ final class TilingManager {
             } else if window.isTileable {
                 observeWindow(window)
                 dormant.remove(window)
-                insert(window)
+                if !adoptTab(window) { insert(window) }
             } else if window.isMinimized || window.isFullScreen {
                 observeWindow(window)
                 dormant.insert(window)
@@ -392,10 +392,39 @@ final class TilingManager {
         if window.isTileable {
             observeWindow(window)
             dormant.remove(window)
-            insert(window)
+            if !adoptTab(window) { insert(window) }
         } else if attempt < 3 {
             after([0.1, 0.3, 1.0][attempt]) { [weak self] in self?.windowCreated(window, attempt: attempt + 1) }
         }
+    }
+
+    // Each native tab is its own window, but only the selected one is listed, so a newly shown tab takes its hidden sibling's place.
+    private func adoptTab(_ window: AXWindow) -> Bool {
+        let tabs = window.tabTitles
+        guard tabs.count > 1 else { return false }
+        let listed = Set(AX.windows(of: window.pid))
+        let frame = window.frame
+        let candidates = allManagedWindows().filter { sibling in
+            sibling.pid == window.pid && !listed.contains(sibling) && sibling.title.map(tabs.contains) == true
+        }
+        let distance = { (sibling: AXWindow) -> CGFloat in
+            guard let known = self.placed[sibling] ?? self.parked[sibling], let frame else { return .greatestFiniteMagnitude }
+            return abs(known.minX - frame.minX) + abs(known.minY - frame.minY)
+        }
+        guard let sibling = candidates.min(by: { distance($0) < distance($1) }),
+              let (display, workspace) = location(of: sibling) else { return false }
+        if let index = workspace.columnIndex(of: sibling) {
+            workspace.columns[index] = Column(window, width: workspace.columns[index].width)
+        } else if let index = workspace.floating.firstIndex(of: sibling) {
+            workspace.floating[index] = window
+        }
+        if workspace.focused == sibling { workspace.focused = window }
+        placed[window] = placed.removeValue(forKey: sibling)
+        parked[window] = parked.removeValue(forKey: sibling)
+        floatingFrames[window] = floatingFrames.removeValue(forKey: sibling)
+        draggedWindows.remove(sibling)
+        layout(display)
+        return true
     }
 
     private func insert(_ window: AXWindow, on target: Display? = nil, width: CGFloat = TilingManager.newWindowWidth) {

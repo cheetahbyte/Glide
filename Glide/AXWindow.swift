@@ -20,6 +20,15 @@ nonisolated struct AXWindow: Hashable {
     }
 
     var size: CGSize? { AX.size(element, kAXSizeAttribute) }
+    var title: String? { AX.string(element, kAXTitleAttribute) }
+
+    var tabTitles: [String] {
+        AX.elements(element, kAXChildrenAttribute)
+            .filter { AX.string($0, kAXRoleAttribute) == kAXTabGroupRole }
+            .flatMap { AX.elements($0, kAXChildrenAttribute) }
+            .filter { AX.string($0, kAXSubroleAttribute) == "AXTabButton" }
+            .compactMap { AX.string($0, kAXTitleAttribute) }
+    }
 
     var isMinimized: Bool { AX.bool(element, kAXMinimizedAttribute) ?? false }
     var isFullScreen: Bool { AX.bool(element, "AXFullScreen") ?? false }
