@@ -4,6 +4,14 @@
         <title>Glide</title>
         <!-- items -->
         <item>
+            <title>0.2</title>
+            <pubDate>Sat, 17 Oct 2026 09:59:47 +0000</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/cheetahbyte/Glide/releases/download/v0.2/Glide-0.2.zip" sparkle:edSignature="vgNZ/IfuhOQ2zQX5ss5oQCL7knyL6yCP8czHVqIOxwawqh8G5HJ1IP/UUC2bQ5ALt8QzPEUOjqcud2mODHypAA==" length="1319749" type="application/octet-stream"/>
+        </item>
+        <item>
             <title>0.1</title>
             <pubDate>Fri, 16 Oct 2026 20:23:25 +0000</pubDate>
             <sparkle:version>1</sparkle:version>
