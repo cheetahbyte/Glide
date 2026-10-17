@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let prefs = Preferences.shared
     private let manager = TilingManager()
     private let swipe = SwipeMonitor()
+    private let scroll = ScrollMonitor()
     #if DEBUG
     // Dev builds must not "update" themselves to the published release.
     private let updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
@@ -32,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         swipe.onBegan = { [weak self] in self?.manager.swipeBegan() }
         swipe.onMoved = { [weak self] delta in self?.manager.swipeMoved(by: delta) }
         swipe.onEnded = { [weak self] in self?.manager.swipeEnded() }
+        scroll.onBegan = { [weak self] in self?.manager.swipeBegan() }
+        scroll.onMoved = { [weak self] points in self?.manager.scrollMoved(by: points) }
+        scroll.onEnded = { [weak self] in self?.manager.swipeEnded() }
 
         preferencesSubscription = prefs.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { MainActor.assumeIsolated { self?.applyPreferences() } }
@@ -75,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private func stopEngine() {
         hotKeys.unregisterAll()
         swipe.stop()
+        scroll.stop()
         manager.stop()
     }
 
@@ -84,6 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             if !swipe.start() { NSLog("Glide: could not create the trackpad event tap") }
         } else {
             swipe.stop()
+        }
+        scroll.setModifier(prefs.modifier.eventFlags)
+        if prefs.scrollEnabled && manager.isRunning {
+            if !scroll.start() { NSLog("Glide: could not create the scroll event tap") }
+        } else {
+            scroll.stop()
         }
     }
 

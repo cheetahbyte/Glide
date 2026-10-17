@@ -28,7 +28,7 @@ enum SettingsPane: CaseIterable {
         case .general: AnyView(GeneralSettings().frame(width: 560, height: 220))
         case .layout: AnyView(LayoutSettings().frame(width: 560, height: 480))
         case .shortcuts: AnyView(ShortcutSettings().frame(width: 560, height: 480))
-        case .trackpad: AnyView(TrackpadSettings().frame(width: 560, height: 320))
+        case .trackpad: AnyView(TrackpadSettings().frame(width: 560, height: 420))
         }
     }
 }
@@ -123,6 +123,13 @@ struct TrackpadSettings: View {
                 if prefs.swipeEnabled, let swipeConflict {
                     SwipeConflictNote(conflict: swipeConflict, fingers: prefs.swipeFingers)
                 }
+            }
+
+            Section("Mouse") {
+                Toggle("Slide the row by scrolling while holding \(prefs.modifier.symbol)", isOn: $prefs.scrollEnabled)
+                Text("Works with a Magic Mouse swipe or a scroll wheel.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

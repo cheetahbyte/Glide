@@ -1,4 +1,5 @@
 import Combine
+import CoreGraphics
 import Foundation
 
 enum ModifierChoice: String, CaseIterable, Identifiable {
@@ -21,6 +22,14 @@ enum ModifierChoice: String, CaseIterable, Identifiable {
         case .controlOption: "Control + Option (⌃⌥)"
         case .option: "Option (⌥)"
         case .commandOption: "Command + Option (⌘⌥)"
+        }
+    }
+
+    var eventFlags: CGEventFlags {
+        switch self {
+        case .controlOption: [.maskControl, .maskAlternate]
+        case .option: .maskAlternate
+        case .commandOption: [.maskCommand, .maskAlternate]
         }
     }
 }
@@ -49,6 +58,10 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(swipeEnabled, forKey: Key.swipeEnabled) }
     }
 
+    @Published var scrollEnabled: Bool {
+        didSet { defaults.set(scrollEnabled, forKey: Key.scrollEnabled) }
+    }
+
     @Published var workspaceCount: Int {
         didSet { defaults.set(workspaceCount, forKey: Key.workspaceCount) }
     }
@@ -66,6 +79,7 @@ final class Preferences: ObservableObject {
         static let gap = "gap"
         static let swipeFingers = "swipeFingers"
         static let swipeEnabled = "swipeEnabled"
+        static let scrollEnabled = "scrollEnabled"
         static let workspaceCount = "workspaceCount"
         static let onboarding = "hasCompletedOnboarding"
         static let appOrder = "appOrder"
@@ -77,6 +91,7 @@ final class Preferences: ObservableObject {
             Key.gap: 8.0,
             Key.swipeFingers: 3,
             Key.swipeEnabled: true,
+            Key.scrollEnabled: true,
             Key.workspaceCount: 4,
             Key.onboarding: false,
         ])
@@ -84,6 +99,7 @@ final class Preferences: ObservableObject {
         gap = min(max(defaults.double(forKey: Key.gap), Self.gapRange.lowerBound), Self.gapRange.upperBound)
         swipeFingers = defaults.integer(forKey: Key.swipeFingers) == 4 ? 4 : 3
         swipeEnabled = defaults.bool(forKey: Key.swipeEnabled)
+        scrollEnabled = defaults.bool(forKey: Key.scrollEnabled)
         workspaceCount = min(max(defaults.integer(forKey: Key.workspaceCount), 1), Self.maxWorkspaces)
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
         appOrder = defaults.stringArray(forKey: Key.appOrder) ?? []

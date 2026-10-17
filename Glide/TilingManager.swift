@@ -754,6 +754,11 @@ final class TilingManager {
         }
     }
 
+    func scrollMoved(by points: CGFloat) {
+        guard isRunning, let display = swipeDisplay else { return }
+        swipeMoved(by: points / (viewport(of: display).width * 1.5))
+    }
+
     private func flushSwipe() {
         swipeFlushScheduled = false
         guard isRunning, let display = swipeDisplay, pendingSwipe != 0 else { return }
