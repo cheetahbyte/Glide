@@ -7,7 +7,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private let prefs = Preferences.shared
     private let manager = TilingManager()
     private let swipe = SwipeMonitor()
+    #if DEBUG
+    // Dev builds must not "update" themselves to the published release.
+    private let updater = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil)
+    #else
     private let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    #endif
     private lazy var hotKeys = HotKeys { [weak self] command in self?.manager.perform(command) }
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
