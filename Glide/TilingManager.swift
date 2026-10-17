@@ -538,7 +538,9 @@ final class TilingManager {
             let next = columnIndex + (direction == .left ? -1 : 1)
             guard workspace.columns.indices.contains(next) else { return }
             workspace.columns.swapAt(columnIndex, next)
-            ensureVisible(next, in: workspace, on: display)
+            applyAppOrder(to: workspace)
+            guard let moved = workspace.columnIndex(of: window), moved != columnIndex else { return }
+            ensureVisible(moved, in: workspace, on: display)
             layout(display)
 
         case .widen:
@@ -649,27 +651,6 @@ final class TilingManager {
         suppressFollow()
         layout(display)
         display.active.focused?.focus()
-    }
-
-    private func move(_ window: AXWindow, toWorkspace number: Int, on display: Display) {
-        let index = number - 1
-        guard display.workspaces.indices.contains(index), index != display.activeIndex,
-              let source = display.workspace(containing: window) else { return }
-        let isFloating = source.floating.contains(window)
-        let width = source.columns.first { $0.window == window }?.width ?? Self.newWindowWidth
-        let frame = window.frame
-        removeFromLayout(window, refocus: true)
-        let target = display.workspaces[index]
-        if isFloating {
-            target.floating.append(window)
-            if let frame { floatingFrames[window] = frame }
-        } else {
-            let at = target.focusedColumnIndex.map { $0 + 1 } ?? target.columns.count
-            target.columns.insert(Column(window, width: width), at: at)
-            ensureVisible(at, in: target, on: display)
-        }
-        target.focused = window
-        layout(display)
     }
 
     func swipeBegan() {

@@ -13,9 +13,7 @@ enum Command: Hashable {
     case fill
     case center
     case toggleFloat
-    case sendToOtherDisplay
     case switchWorkspace(Int)
-    case moveToWorkspace(Int)
 
     var title: String {
         switch self {
@@ -28,9 +26,7 @@ enum Command: Hashable {
         case .fill: "Fill the screen with the window"
         case .center: "Bring the window to the centre of the screen"
         case .toggleFloat: "Let the window float above the row, or put it back"
-        case .sendToOtherDisplay: "Send the window to your other display"
         case .switchWorkspace(let n): "Switch to workspace \(n)"
-        case .moveToWorkspace(let n): "Move the window to workspace \(n)"
         }
     }
 }
@@ -103,18 +99,13 @@ enum Shortcuts {
             Shortcut(key: .character("f", keyCode: kVK_ANSI_F), shift: false, command: .fill),
             Shortcut(key: .character("c", keyCode: kVK_ANSI_C), shift: false, command: .center),
             Shortcut(key: .character("t", keyCode: kVK_ANSI_T), shift: false, command: .toggleFloat),
-            Shortcut(key: .character("n", keyCode: kVK_ANSI_N), shift: false, command: .sendToOtherDisplay),
         ]
         return list
     }()
 
     static func workspaceShortcuts(count: Int) -> [Shortcut] {
-        (1...count).flatMap { n in
-            let key = Shortcut.Key.character("\(n)", keyCode: digitKeyCodes[n - 1])
-            return [
-                Shortcut(key: key, shift: false, command: .switchWorkspace(n)),
-                Shortcut(key: key, shift: true, command: .moveToWorkspace(n)),
-            ]
+        (1...count).map { n in
+            Shortcut(key: .character("\(n)", keyCode: digitKeyCodes[n - 1]), shift: false, command: .switchWorkspace(n))
         }
     }
 

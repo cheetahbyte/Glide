@@ -84,7 +84,6 @@ struct ShortcutList: View {
                 ShortcutRow(keys: shortcut.label(modifier: modifier), title: shortcut.command.title)
             }
             ShortcutRow(keys: "\(modifier.symbol)1–\(workspaceCount)", title: "Switch to workspace 1 to \(workspaceCount)")
-            ShortcutRow(keys: "\(modifier.symbol)⇧1–\(workspaceCount)", title: "Move the window to workspace 1 to \(workspaceCount)")
         }
     }
 }
