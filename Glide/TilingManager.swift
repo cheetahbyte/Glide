@@ -4,11 +4,14 @@ import ApplicationServices
 final class TilingManager {
     static let widthPresets: [CGFloat] = [1.0 / 2, 2.0 / 3, 1]
     static let newWindowWidth: CGFloat = 1.0 / 2
+    static let offlineGrace: TimeInterval = 15
 
     private let prefs = Preferences.shared
     private let mover = WindowMover.shared
     private(set) var isRunning = false
     private var displays: [Display] = []
+    private var offline: [(display: Display, since: TimeInterval)] = []
+    private var screenChangeGeneration = 0
     private var observers: [pid_t: AXObserver] = [:]
     private var dormant: Set<AXWindow> = []
     private var parked: [AXWindow: CGRect] = [:]
@@ -49,7 +52,10 @@ final class TilingManager {
         observe(workspace, NSWorkspace.didHideApplicationNotification) { manager, app in manager.appHidden(app.processIdentifier) }
         observe(workspace, NSWorkspace.didUnhideApplicationNotification) { manager, app in manager.scan(app.processIdentifier) }
         observe(workspace, NSWorkspace.activeSpaceDidChangeNotification) { manager, _ in manager.reconcile() }
-        observe(workspace, NSWorkspace.didWakeNotification) { manager, _ in manager.reconcile() }
+        observe(workspace, NSWorkspace.didWakeNotification) { manager, _ in
+            manager.reconcile()
+            manager.scheduleResync()
+        }
         observe(NotificationCenter.default, NSApplication.didChangeScreenParametersNotification) { manager, _ in manager.screensChanged() }
 
         let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
@@ -76,6 +82,7 @@ final class TilingManager {
         releaseParkedWindows()
         mover.restoreEnhancedUI()
         displays = []
+        offline = []
         dormant = []
         parked = [:]
         placed = [:]
@@ -127,12 +134,13 @@ final class TilingManager {
     }
 
     private func rebuildDisplays() {
+        let known = displays + offline.map(\.display)
         var updated: [Display] = []
         for screen in NSScreen.screens {
             guard let id = screen.displayID else { continue }
             let frame = Coordinates.ax(fromCocoa: screen.frame)
             let visible = Coordinates.ax(fromCocoa: screen.visibleFrame)
-            if let existing = displays.first(where: { $0.id == id }) {
+            if let existing = known.first(where: { $0.id == id }) {
                 existing.frame = frame
                 existing.visibleFrame = visible
                 updated.append(existing)
@@ -141,10 +149,23 @@ final class TilingManager {
             }
         }
         updated.sort { ($0.frame.minX, $0.frame.minY) < ($1.frame.minX, $1.frame.minY) }
+        let now = ProcessInfo.processInfo.systemUptime
         let removed = displays.filter { old in !updated.contains { $0 === old } }
+        offline = offline.filter { entry in !updated.contains { $0 === entry.display } } + removed.map { ($0, now) }
         displays = updated
-        guard let fallback = updated.first else { return }
-        for display in removed {
+        if !removed.isEmpty {
+            after(Self.offlineGrace + 0.5) { [weak self] in self?.retireOfflineDisplays() }
+        }
+    }
+
+    // Displays often drop out for a few seconds on wake, so their workspaces are kept until the grace period passes.
+    private func retireOfflineDisplays() {
+        guard isRunning, let fallback = displays.first else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let expired = offline.filter { now - $0.since >= Self.offlineGrace }.map(\.display)
+        guard !expired.isEmpty else { return }
+        offline.removeAll { entry in expired.contains { $0 === entry.display } }
+        for display in expired {
             for (index, workspace) in display.workspaces.enumerated() {
                 let target = fallback.workspaces[min(index, fallback.workspaces.count - 1)]
                 target.columns += workspace.columns
@@ -153,11 +174,32 @@ final class TilingManager {
                 workspace.allWindows.forEach { parked.removeValue(forKey: $0) }
             }
         }
+        layoutAll()
     }
 
     private func screensChanged() {
         rebuildDisplays()
         layoutAll()
+        scheduleResync()
+    }
+
+    // macOS moves off-screen windows back on screen when displays change, which leaves the cached frames stale.
+    private func scheduleResync() {
+        screenChangeGeneration += 1
+        let generation = screenChangeGeneration
+        after(1) { [weak self] in
+            guard let self, self.isRunning, generation == self.screenChangeGeneration else { return }
+            self.resyncFrames()
+            self.layoutAll()
+        }
+    }
+
+    private func resyncFrames() {
+        for window in allManagedWindows() {
+            guard let frame = window.frame else { continue }
+            if parked[window] != nil { parked[window] = frame }
+            if placed[window] != nil { placed[window] = frame }
+        }
     }
 
     private func display(containing point: CGPoint) -> Display? {
@@ -174,7 +216,7 @@ final class TilingManager {
     }
 
     private func location(of window: AXWindow) -> (Display, Workspace)? {
-        for display in displays {
+        for display in displays + offline.map(\.display) {
             if let workspace = display.workspace(containing: window) { return (display, workspace) }
         }
         return nil
@@ -342,7 +384,7 @@ final class TilingManager {
     }
 
     private func allManagedWindows() -> [AXWindow] {
-        displays.flatMap { $0.workspaces.flatMap(\.allWindows) }
+        (displays + offline.map(\.display)).flatMap { $0.workspaces.flatMap(\.allWindows) }
     }
 
     private func windowCreated(_ window: AXWindow, attempt: Int) {
@@ -933,7 +975,7 @@ final class TilingManager {
     }
 
     private func layout(_ display: Display, pass: Int = 0, sliding: Bool = false) {
-        guard isRunning else { return }
+        guard isRunning, displays.contains(where: { $0 === display }) else { return }
         let viewport = viewport(of: display)
 
         for (index, workspace) in display.workspaces.enumerated() where index != display.activeIndex && !sliding {
