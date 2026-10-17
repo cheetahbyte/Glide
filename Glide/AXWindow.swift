@@ -1,7 +1,7 @@
 import AppKit
 import ApplicationServices
 
-struct AXWindow: Hashable {
+nonisolated struct AXWindow: Hashable {
     let element: AXUIElement
     let pid: pid_t
 
@@ -69,7 +69,7 @@ struct AXWindow: Hashable {
     }
 }
 
-enum AX {
+nonisolated enum AX {
     static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }

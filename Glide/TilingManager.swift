@@ -6,6 +6,7 @@ final class TilingManager {
     static let newWindowWidth: CGFloat = 1.0 / 2
 
     private let prefs = Preferences.shared
+    private let mover = WindowMover.shared
     private(set) var isRunning = false
     private var displays: [Display] = []
     private var observers: [pid_t: AXObserver] = [:]
@@ -21,6 +22,8 @@ final class TilingManager {
     private var swipeFlushScheduled = false
     private var swipeVelocity: CGFloat = 0
     private var lastSwipeTime: TimeInterval = 0
+    private var swipeCanRevealDesktop = false
+    private var lastHapticTime: TimeInterval = 0
     private var settleTimer: Timer?
     private var reconcileTimer: Timer?
     private var dragTimer: Timer?
@@ -67,6 +70,7 @@ final class TilingManager {
         }
         observers = [:]
         releaseParkedWindows()
+        mover.restoreEnhancedUI()
         displays = []
         dormant = []
         parked = [:]
@@ -278,6 +282,7 @@ final class TilingManager {
         if let observer = observers.removeValue(forKey: pid) {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
         }
+        mover.forget(pid)
         for window in allManagedWindows() + Array(dormant) where window.pid == pid {
             forget(window)
         }
@@ -483,6 +488,7 @@ final class TilingManager {
 
     func perform(_ command: Command) {
         cancelSettle()
+        mover.restoreEnhancedUI()
         guard isRunning, let (display, workspace, window) = commandTarget() else { return }
         switch command {
         case .switchWorkspace(let number):
@@ -662,6 +668,7 @@ final class TilingManager {
         pendingSwipe = 0
         lastSwipeTime = ProcessInfo.processInfo.systemUptime
         swipeDisplay = displayUnderMouse()
+        swipeCanRevealDesktop = (swipeDisplay?.active.scroll ?? 1) <= 0.5
     }
 
     func swipeMoved(by delta: CGFloat) {
@@ -679,10 +686,10 @@ final class TilingManager {
         guard isRunning, let display = swipeDisplay, pendingSwipe != 0 else { return }
         let workspace = display.active
         let viewport = viewport(of: display)
+        guard let range = swipeRange(workspace, on: display) else { return }
         let previous = workspace.scroll
-        workspace.scroll -= pendingSwipe * viewport.width * 1.5
+        workspace.scroll = min(max(previous - pendingSwipe * viewport.width * 1.5, range.lowerBound), range.upperBound)
         pendingSwipe = 0
-        clampScroll(workspace, on: display)
         let current = workspace.scroll
 
         let now = ProcessInfo.processInfo.systemUptime
@@ -691,13 +698,15 @@ final class TilingManager {
         lastSwipeTime = now
 
         if current != previous {
-            let crossed = snapPoints(workspace, viewport).contains { point in
-                (previous - point) * (current - point) < 0 || (current == point && previous != point)
+            if current == range.lowerBound || current == range.upperBound {
+                haptic(.levelChange)
+            } else if snapPoints(workspace, on: display).contains(where: { point in
+                (previous - point) * (current - point) < 0 || current == point
+            }) {
+                haptic(.alignment)
             }
-            let hitEnd = scrollBounds(workspace, viewport).map { current == $0.lowerBound || current == $0.upperBound } ?? false
-            if crossed || hitEnd { haptic() }
         }
-        layout(display, sliding: true, movingRight: current < previous)
+        layout(display, sliding: true)
     }
 
     func swipeEnded() {
@@ -706,45 +715,65 @@ final class TilingManager {
         swipeDisplay = nil
         pendingSwipe = 0
         let workspace = display.active
-        let viewport = viewport(of: display)
         if ProcessInfo.processInfo.systemUptime - lastSwipeTime > 0.08 { swipeVelocity = 0 }
-        let projected = workspace.scroll + swipeVelocity * 0.12
-        let target = snapPoints(workspace, viewport).min { abs($0 - projected) < abs($1 - projected) } ?? workspace.scroll
-        settle(display, to: target) { [weak self] in
+        let scroll = workspace.scroll
+        let points = snapPoints(workspace, on: display).filter { $0 >= (swipeRange(workspace, on: display)?.lowerBound ?? $0) }
+        let nearest = { (to: CGFloat, among: [CGFloat]) in among.min { abs($0 - to) < abs($1 - to) } }
+        var target = nearest(scroll, points) ?? scroll
+        if abs(swipeVelocity) > 350 {
+            let ahead = points.filter { swipeVelocity > 0 ? $0 > scroll + 1 : $0 < scroll - 1 }
+            target = nearest(scroll + swipeVelocity * 0.18, ahead) ?? target
+        }
+        settle(display, to: target, velocity: swipeVelocity) { [weak self] in
             guard let self else { return }
             self.layout(display)
+            self.mover.restoreEnhancedUI()
             self.focusVisibleColumn(in: display.active, on: display)
         }
     }
 
-    private func snapPoints(_ workspace: Workspace, _ viewport: CGRect) -> [CGFloat] {
+    private func desktopScroll(of display: Display) -> CGFloat {
+        viewport(of: display).minX - display.frame.maxX
+    }
+
+    private func swipeRange(_ workspace: Workspace, on display: Display) -> ClosedRange<CGFloat>? {
+        guard let bounds = scrollBounds(workspace, viewport(of: display)) else { return nil }
+        let lower = swipeCanRevealDesktop ? min(desktopScroll(of: display), bounds.lowerBound) : bounds.lowerBound
+        return lower...bounds.upperBound
+    }
+
+    private func snapPoints(_ workspace: Workspace, on display: Display) -> [CGFloat] {
+        let viewport = viewport(of: display)
         guard let last = workspace.columns.indices.last else { return [0] }
         let lefts = columnLefts(workspace, viewport)
         let end = max(0, lefts[last] + pixelWidth(workspace.columns[last].width, viewport) - viewport.width)
-        return lefts.filter { $0 < end } + [end]
+        return [desktopScroll(of: display)] + lefts.filter { $0 < end } + [end]
     }
 
-    private func settle(_ display: Display, to target: CGFloat, completion: @escaping @MainActor () -> Void) {
+    // Critically damped spring seeded with the release velocity, capped so it never overshoots the target.
+    private func settle(_ display: Display, to target: CGFloat, velocity: CGFloat, completion: @escaping @MainActor () -> Void) {
         cancelSettle()
         let workspace = display.active
-        let start = workspace.scroll
-        let distance = target - start
-        guard abs(distance) > 0.5 else {
+        let offset = workspace.scroll - target
+        guard abs(offset) > 0.5 else {
             workspace.scroll = target
             completion()
             return
         }
-        let duration = min(0.28, max(0.14, abs(distance) / 2500))
+        let omega: CGFloat = 26
+        let limit = omega * abs(offset)
+        let initialVelocity = offset > 0 ? min(0, max(velocity, -limit)) : max(0, min(velocity, limit))
+        let slope = initialVelocity + omega * offset
         let began = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.isRunning else { return }
-                let progress = min(1, (ProcessInfo.processInfo.systemUptime - began) / duration)
-                let eased = 1 - pow(1 - progress, 3)
-                let previous = workspace.scroll
-                workspace.scroll = start + distance * eased
-                self.layout(display, sliding: true, movingRight: workspace.scroll < previous)
-                if progress >= 1 {
+                let t = CGFloat(ProcessInfo.processInfo.systemUptime - began)
+                let displacement = (offset + slope * t) * exp(-omega * t)
+                let done = abs(displacement) < 0.5 || t > 0.8
+                workspace.scroll = done ? target : target + displacement
+                self.layout(display, sliding: true)
+                if done {
                     self.cancelSettle()
                     completion()
                 }
@@ -774,8 +803,11 @@ final class TilingManager {
         }
     }
 
-    private func haptic() {
-        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    private func haptic(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastHapticTime > 0.05 else { return }
+        lastHapticTime = now
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
     }
 
     private func viewport(of display: Display) -> CGRect {
@@ -808,6 +840,7 @@ final class TilingManager {
         let viewport = viewport(of: display)
         let lefts = columnLefts(workspace, viewport)
         guard lefts.indices.contains(index) else { return }
+        if let bounds = scrollBounds(workspace, viewport) { workspace.scroll = max(workspace.scroll, bounds.lowerBound) }
         let left = lefts[index]
         let width = pixelWidth(workspace.columns[index].width, viewport)
         if width >= viewport.width || left < workspace.scroll {
@@ -833,14 +866,18 @@ final class TilingManager {
             workspace.scroll = 0
             return
         }
-        workspace.scroll = min(max(workspace.scroll, bounds.lowerBound), bounds.upperBound)
+        if workspace.scroll < bounds.lowerBound {
+            workspace.scroll = min(desktopScroll(of: display), bounds.lowerBound)
+            return
+        }
+        workspace.scroll = min(workspace.scroll, bounds.upperBound)
     }
 
     private func layoutAll() {
         displays.forEach { layout($0) }
     }
 
-    private func layout(_ display: Display, pass: Int = 0, sliding: Bool = false, movingRight: Bool = false) {
+    private func layout(_ display: Display, pass: Int = 0, sliding: Bool = false) {
         guard isRunning else { return }
         let viewport = viewport(of: display)
 
@@ -854,25 +891,15 @@ final class TilingManager {
         let workspace = display.active
         let lefts = columnLefts(workspace, viewport)
         var widthChanged = false
-        let order = sliding && movingRight ? Array(workspace.columns.indices.reversed()) : Array(workspace.columns.indices)
-        var neighbourEdge: CGFloat?
-        for index in order {
-            let column = workspace.columns[index]
+        for (index, column) in workspace.columns.enumerated() {
             let width = pixelWidth(column.width, viewport)
-            let desiredX = (viewport.minX + lefts[index] - workspace.scroll).rounded()
-            let visible = desiredX < display.frame.maxX && desiredX + width > display.frame.minX
-            var x = desiredX
-            if sliding, visible, let edge = neighbourEdge {
-                x = movingRight ? min(x, edge - gap - width) : max(x, edge + gap)
-            }
+            let x = (viewport.minX + lefts[index] - workspace.scroll).rounded()
+            let visible = x < display.frame.maxX && x + width > display.frame.minX
             let side: ParkSide = x + width <= display.frame.minX ? .left : .right
             let frame = CGRect(x: x, y: viewport.minY, width: width, height: viewport.height)
             let window = column.window
             if visible && sliding {
                 slide(window, to: frame, in: column, viewport)
-                if let actual = AX.point(window.element, kAXPositionAttribute) {
-                    neighbourEdge = movingRight ? actual.x : actual.x + width
-                }
             } else if visible {
                 widthChanged = place(window, frame, in: column, viewport) || widthChanged
             } else {
@@ -894,6 +921,7 @@ final class TilingManager {
 
     @discardableResult
     private func place(_ window: AXWindow, _ frame: CGRect, in column: Column?, _ viewport: CGRect) -> Bool {
+        mover.drain(window)
         parked.removeValue(forKey: window)
         placed[window] = frame
         let current = window.frame
@@ -911,7 +939,7 @@ final class TilingManager {
         }
         parked.removeValue(forKey: window)
         placed[window] = frame
-        if known.origin != frame.origin { AX.setPoint(window.element, frame.origin) }
+        if known.origin != frame.origin { mover.move(window, to: frame.origin) }
     }
 
     private enum ParkSide { case left, right, corner }
@@ -938,8 +966,9 @@ final class TilingManager {
         let rect = CGRect(origin: origin, size: size)
         guard parked[window] != rect else { return }
         if sliding, placed[window]?.size == rect.size {
-            AX.setPoint(window.element, rect.origin)
+            mover.move(window, to: rect.origin)
         } else {
+            mover.drain(window)
             window.setFrame(rect, current: window.frame)
         }
         parked[window] = rect
@@ -951,6 +980,7 @@ final class TilingManager {
             let viewport = viewport(of: display)
             for workspace in display.workspaces {
                 for window in workspace.allWindows where parked[window] != nil {
+                    mover.drain(window)
                     if let frame = floatingFrames[window] {
                         window.setFrame(frame, current: nil)
                         continue
