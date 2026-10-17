@@ -107,7 +107,7 @@ struct ShortcutSettings: View {
 
 struct TrackpadSettings: View {
     @ObservedObject var prefs = Preferences.shared
-    @State private var swipeConflict = false
+    @State private var swipeConflict: SystemSetup.SwipeConflict?
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -120,8 +120,8 @@ struct TrackpadSettings: View {
                     Text("Four fingers").tag(4)
                 }
                 .disabled(!prefs.swipeEnabled)
-                if prefs.swipeEnabled && swipeConflict {
-                    SwipeConflictNote(fingers: prefs.swipeFingers)
+                if prefs.swipeEnabled, let swipeConflict {
+                    SwipeConflictNote(conflict: swipeConflict, fingers: prefs.swipeFingers)
                 }
             }
         }
@@ -132,7 +132,7 @@ struct TrackpadSettings: View {
     }
 
     private func refresh() {
-        swipeConflict = SystemSetup.systemUsesHorizontalSwipe(fingers: prefs.swipeFingers)
+        swipeConflict = SystemSetup.horizontalSwipeConflict(fingers: prefs.swipeFingers)
     }
 }
 
@@ -174,19 +174,34 @@ struct AccessibilityButton: View {
 }
 
 struct SwipeConflictNote: View {
+    let conflict: SystemSetup.SwipeConflict
     let fingers: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(
-                "macOS may also use a \(fingers == 3 ? "three" : "four")-finger swipe to switch between full-screen apps.",
-                systemImage: "exclamationmark.triangle.fill"
-            )
-            .foregroundStyle(.orange)
-            Text("If swiping switches desktops instead of sliding the row, open Trackpad › More Gestures and change “Swipe between full-screen applications”, or pick the other finger count here.")
+            Label(summary, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(advice)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Open Trackpad Settings…") { SystemSetup.openTrackpadSettings() }
+        }
+    }
+
+    private var summary: String {
+        let count = fingers == 3 ? "three" : "four"
+        switch conflict {
+        case .pages: return "macOS may also use a \(count)-finger swipe to go back and forward between pages."
+        case .fullScreenApps: return "macOS may also use a \(count)-finger swipe to switch between full-screen apps."
+        }
+    }
+
+    private var advice: String {
+        switch conflict {
+        case .pages:
+            return "If swiping goes back a page instead of sliding the row, open Trackpad › More Gestures and set “Swipe between pages” to “Scroll left or right with two fingers”, or pick the other finger count here."
+        case .fullScreenApps:
+            return "If swiping switches desktops instead of sliding the row, open Trackpad › More Gestures and change “Swipe between full-screen applications”, or pick the other finger count here."
         }
     }
 }

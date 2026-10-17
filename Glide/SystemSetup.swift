@@ -16,13 +16,14 @@ enum SystemSetup {
         open("x-apple.systempreferences:com.apple.Trackpad-Settings.extension")
     }
 
-    static func systemUsesHorizontalSwipe(fingers: Int) -> Bool {
+    enum SwipeConflict { case pages, fullScreenApps }
+
+    static func horizontalSwipeConflict(fingers: Int) -> SwipeConflict? {
         let key = fingers == 3 ? "TrackpadThreeFingerHorizSwipeGesture" : "TrackpadFourFingerHorizSwipeGesture"
         let domains = ["com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad"]
-        return domains.contains { domain in
-            guard let value = CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? Int else { return false }
-            return value != 0
-        }
+        let values = domains.compactMap { CFPreferencesCopyAppValue(key as CFString, $0 as CFString) as? Int }
+        guard let value = values.first(where: { $0 != 0 }) else { return nil }
+        return value == 1 ? .pages : .fullScreenApps
     }
 
     private static func open(_ string: String) {

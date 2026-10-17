@@ -4,7 +4,7 @@ import SwiftUI
 struct SetupView: View {
     @ObservedObject var prefs = Preferences.shared
     @State private var trusted = SystemSetup.isAccessibilityTrusted
-    @State private var swipeConflict = false
+    @State private var swipeConflict: SystemSetup.SwipeConflict?
     let onDone: () -> Void
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -30,11 +30,11 @@ struct SetupView: View {
                 }
             }
 
-            step(number: 2, title: "Check the trackpad", done: !swipeConflict || !prefs.swipeEnabled) {
+            step(number: 2, title: "Check the trackpad", done: swipeConflict == nil || !prefs.swipeEnabled) {
                 Text("A \(prefs.swipeFingers == 3 ? "three" : "four")-finger swipe slides the row.")
                     .foregroundStyle(.secondary)
-                if swipeConflict && prefs.swipeEnabled {
-                    SwipeConflictNote(fingers: prefs.swipeFingers)
+                if let swipeConflict, prefs.swipeEnabled {
+                    SwipeConflictNote(conflict: swipeConflict, fingers: prefs.swipeFingers)
                 }
             }
 
@@ -63,7 +63,7 @@ struct SetupView: View {
 
     private func refresh() {
         trusted = SystemSetup.isAccessibilityTrusted
-        swipeConflict = SystemSetup.systemUsesHorizontalSwipe(fingers: prefs.swipeFingers)
+        swipeConflict = SystemSetup.horizontalSwipeConflict(fingers: prefs.swipeFingers)
     }
 
     private func step<Content: View>(
