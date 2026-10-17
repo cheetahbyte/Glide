@@ -25,6 +25,8 @@ final class TilingManager {
     private var swipeCanRevealDesktop = false
     private var lastHapticTime: TimeInterval = 0
     private var settleTimer: Timer?
+    private var isSettlingSwipe = false
+    private var offsets: [AXWindow: CGFloat] = [:]
     private var reconcileTimer: Timer?
     private var dragTimer: Timer?
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
@@ -380,23 +382,24 @@ final class TilingManager {
     private func removeFromLayout(_ window: AXWindow, refocus: Bool) {
         guard let (display, workspace) = location(of: window) else { return }
         let wasFocused = workspace.focused == window
-        if let index = workspace.floating.firstIndex(of: window) {
-            workspace.floating.remove(at: index)
-            if wasFocused { workspace.focused = workspace.columns.first?.window }
-        } else if let columnIndex = workspace.columnIndex(of: window) {
-            workspace.columns.remove(at: columnIndex)
-            if wasFocused {
-                let neighbour = columnIndex > 0 ? columnIndex - 1 : 0
-                workspace.focused = workspace.columns.indices.contains(neighbour)
-                    ? workspace.columns[neighbour].window
-                    : workspace.floating.last
+        transition(display) {
+            if let index = workspace.floating.firstIndex(of: window) {
+                workspace.floating.remove(at: index)
+                if wasFocused { workspace.focused = workspace.columns.first?.window }
+            } else if let columnIndex = workspace.columnIndex(of: window) {
+                workspace.columns.remove(at: columnIndex)
+                if wasFocused {
+                    let neighbour = columnIndex > 0 ? columnIndex - 1 : 0
+                    workspace.focused = workspace.columns.indices.contains(neighbour)
+                        ? workspace.columns[neighbour].window
+                        : workspace.floating.last
+                }
+            }
+            clampScroll(workspace, on: display)
+            if let focused = workspace.focused, let index = workspace.columnIndex(of: focused), wasFocused {
+                ensureVisible(index, in: workspace, on: display)
             }
         }
-        clampScroll(workspace, on: display)
-        if let focused = workspace.focused, let index = workspace.columnIndex(of: focused), wasFocused {
-            ensureVisible(index, in: workspace, on: display)
-        }
-        layout(display)
         if refocus, wasFocused, workspace === display.active, let focused = workspace.focused {
             suppressFollow()
             focused.focus()
@@ -413,23 +416,28 @@ final class TilingManager {
     }
 
     private func focusChanged(_ pid: pid_t) {
-        guard isRunning, settleTimer == nil, let window = AX.focusedWindow(of: pid), !dormant.contains(window) else { return }
+        guard isRunning, !isSettlingSwipe, swipeDisplay == nil,
+              let window = AX.focusedWindow(of: pid), !dormant.contains(window) else { return }
         guard let (display, workspace) = location(of: window) else {
             windowCreated(window, attempt: 3)
             return
         }
-        let before = (display.activeIndex, display.active.scroll)
         if workspace !== display.active {
             guard Date() >= suppressFollowUntil,
                   let index = display.workspaces.firstIndex(where: { $0 === workspace }) else { return }
+            cancelSettle()
             display.activeIndex = index
+            workspace.focused = window
+            if let columnIndex = workspace.columnIndex(of: window) {
+                ensureVisible(columnIndex, in: workspace, on: display)
+            }
+            layout(display)
+            return
         }
         workspace.focused = window
         if let columnIndex = workspace.columnIndex(of: window) {
-            ensureVisible(columnIndex, in: workspace, on: display)
+            transition(display) { ensureVisible(columnIndex, in: workspace, on: display) }
         }
-        guard before != (display.activeIndex, display.active.scroll) else { return }
-        layout(display)
     }
 
     private func windowMovedOrResized(_ window: AXWindow, resized: Bool) {
@@ -480,14 +488,15 @@ final class TilingManager {
         guard !isFloating, let columnIndex = workspace.columnIndex(of: window) else { return }
         let column = workspace.columns[columnIndex]
         let viewport = viewport(of: display)
-        if abs(frame.width - pixelWidth(column.width, viewport)) > 2 {
-            column.width = fraction(forWidth: frame.width, viewport)
+        transition(display) {
+            if abs(frame.width - pixelWidth(column.width, viewport)) > 2 {
+                column.width = fraction(forWidth: frame.width, viewport)
+            }
         }
-        layout(display)
     }
 
     func perform(_ command: Command) {
-        cancelSettle()
+        if isSettlingSwipe { cancelSettle() }
         mover.restoreEnhancedUI()
         guard isRunning, let (display, workspace, window) = commandTarget() else { return }
         switch command {
@@ -533,24 +542,26 @@ final class TilingManager {
             layout(display)
 
         case .widen:
-            column.width = Self.widthPresets.first { $0 > column.width + 0.01 } ?? Self.widthPresets[0]
-            ensureVisible(columnIndex, in: workspace, on: display)
-            layout(display)
+            transition(display) {
+                column.width = Self.widthPresets.first { $0 > column.width + 0.01 } ?? Self.widthPresets[0]
+                ensureVisible(columnIndex, in: workspace, on: display)
+            }
 
         case .narrow:
             guard let narrower = Self.widthPresets.last(where: { $0 < column.width - 0.01 }) else { return }
-            column.width = narrower
-            ensureVisible(columnIndex, in: workspace, on: display)
-            layout(display)
+            transition(display) {
+                column.width = narrower
+                ensureVisible(columnIndex, in: workspace, on: display)
+            }
 
         case .fill:
-            column.width = 1
-            ensureVisible(columnIndex, in: workspace, on: display)
-            layout(display)
+            transition(display) {
+                column.width = 1
+                ensureVisible(columnIndex, in: workspace, on: display)
+            }
 
         case .center:
-            workspace.scroll = columnCenters(workspace, viewport)[columnIndex] - viewport.width / 2
-            layout(display)
+            transition(display) { workspace.scroll = columnCenters(workspace, viewport)[columnIndex] - viewport.width / 2 }
 
         default:
             break
@@ -569,10 +580,9 @@ final class TilingManager {
 
     private func focus(_ window: AXWindow, in workspace: Workspace, on display: Display) {
         workspace.focused = window
-        if let index = workspace.columnIndex(of: window) {
-            ensureVisible(index, in: workspace, on: display)
+        transition(display) {
+            if let index = workspace.columnIndex(of: window) { ensureVisible(index, in: workspace, on: display) }
         }
-        layout(display)
         window.focus()
     }
 
@@ -634,6 +644,7 @@ final class TilingManager {
     private func switchWorkspace(_ number: Int, on display: Display) {
         let index = number - 1
         guard display.workspaces.indices.contains(index), index != display.activeIndex else { return }
+        cancelSettle()
         display.activeIndex = index
         suppressFollow()
         layout(display)
@@ -750,12 +761,14 @@ final class TilingManager {
         return [desktopScroll(of: display)] + lefts.filter { $0 < end } + [end]
     }
 
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
     // Critically damped spring seeded with the release velocity, capped so it never overshoots the target.
     private func settle(_ display: Display, to target: CGFloat, velocity: CGFloat, completion: @escaping @MainActor () -> Void) {
         cancelSettle()
         let workspace = display.active
         let offset = workspace.scroll - target
-        guard abs(offset) > 0.5 else {
+        guard abs(offset) > 0.5, !reduceMotion else {
             workspace.scroll = target
             completion()
             return
@@ -764,14 +777,71 @@ final class TilingManager {
         let limit = omega * abs(offset)
         let initialVelocity = offset > 0 ? min(0, max(velocity, -limit)) : max(0, min(velocity, limit))
         let slope = initialVelocity + omega * offset
+        isSettlingSwipe = true
+        animate(display) { t in
+            let displacement = (offset + slope * t) * exp(-omega * t)
+            let done = abs(displacement) < 0.5 || t > 0.8
+            workspace.scroll = done ? target : target + displacement
+            return done
+        } completion: { [weak self] in
+            self?.isSettlingSwipe = false
+            completion()
+        }
+    }
+
+    // Applies a layout change, then eases every window from where it is on screen to its new place.
+    private func transition(_ display: Display, _ change: () -> Void) {
+        let workspace = display.active
+        let before = columnFrames(workspace, on: display)
+        change()
+        let after = columnFrames(workspace, on: display)
+        guard workspace === display.active, after != before else { return }
+        var starts: [AXWindow: CGFloat] = [:]
+        for (window, frame) in after {
+            guard let old = before[window] else { continue }
+            let delta = old.minX + (offsets[window] ?? 0) - frame.minX
+            if abs(delta) > 0.5 { starts[window] = delta }
+        }
+        cancelSettle()
+        guard let distance = starts.values.map(abs).max(), !reduceMotion else {
+            layout(display)
+            return
+        }
+        let duration = min(0.38, 0.2 + distance / 8000)
+        animate(display) { [weak self] t in
+            let progress = min(1, t / duration)
+            let eased = progress < 0.5 ? 4 * pow(progress, 3) : 1 - pow(2 - 2 * progress, 3) / 2
+            self?.offsets = starts.mapValues { $0 * (1 - eased) }
+            return progress >= 1
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.offsets = [:]
+            self.layout(display)
+            self.mover.restoreEnhancedUI()
+        }
+    }
+
+    private func columnFrames(_ workspace: Workspace, on display: Display) -> [AXWindow: CGRect] {
+        let viewport = viewport(of: display)
+        let lefts = columnLefts(workspace, viewport)
+        var frames: [AXWindow: CGRect] = [:]
+        for (index, column) in workspace.columns.enumerated() {
+            let x = (viewport.minX + lefts[index] - workspace.scroll).rounded()
+            frames[column.window] = CGRect(x: x, y: viewport.minY, width: pixelWidth(column.width, viewport), height: viewport.height)
+        }
+        return frames
+    }
+
+    private func animate(
+        _ display: Display,
+        step: @escaping @MainActor (CGFloat) -> Bool,
+        completion: @escaping @MainActor () -> Void
+    ) {
         let began = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.isRunning else { return }
-                let t = CGFloat(ProcessInfo.processInfo.systemUptime - began)
-                let displacement = (offset + slope * t) * exp(-omega * t)
-                let done = abs(displacement) < 0.5 || t > 0.8
-                workspace.scroll = done ? target : target + displacement
+                let done = step(CGFloat(ProcessInfo.processInfo.systemUptime - began))
                 self.layout(display, sliding: true)
                 if done {
                     self.cancelSettle()
@@ -786,6 +856,8 @@ final class TilingManager {
     private func cancelSettle() {
         settleTimer?.invalidate()
         settleTimer = nil
+        isSettlingSwipe = false
+        offsets = [:]
     }
 
     private func focusVisibleColumn(in workspace: Workspace, on display: Display) {
@@ -893,7 +965,7 @@ final class TilingManager {
         var widthChanged = false
         for (index, column) in workspace.columns.enumerated() {
             let width = pixelWidth(column.width, viewport)
-            let x = (viewport.minX + lefts[index] - workspace.scroll).rounded()
+            let x = (viewport.minX + lefts[index] - workspace.scroll + (offsets[column.window] ?? 0)).rounded()
             let visible = x < display.frame.maxX && x + width > display.frame.minX
             let side: ParkSide = x + width <= display.frame.minX ? .left : .right
             let frame = CGRect(x: x, y: viewport.minY, width: width, height: viewport.height)
