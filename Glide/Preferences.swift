@@ -53,6 +53,10 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(workspaceCount, forKey: Key.workspaceCount) }
     }
 
+    @Published var appOrder: [String] {
+        didSet { defaults.set(appOrder, forKey: Key.appOrder) }
+    }
+
     @Published var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Key.onboarding) }
     }
@@ -64,6 +68,7 @@ final class Preferences: ObservableObject {
         static let swipeEnabled = "swipeEnabled"
         static let workspaceCount = "workspaceCount"
         static let onboarding = "hasCompletedOnboarding"
+        static let appOrder = "appOrder"
     }
 
     private init() {
@@ -81,5 +86,6 @@ final class Preferences: ObservableObject {
         swipeEnabled = defaults.bool(forKey: Key.swipeEnabled)
         workspaceCount = min(max(defaults.integer(forKey: Key.workspaceCount), 1), Self.maxWorkspaces)
         hasCompletedOnboarding = defaults.bool(forKey: Key.onboarding)
+        appOrder = defaults.stringArray(forKey: Key.appOrder) ?? []
     }
 }

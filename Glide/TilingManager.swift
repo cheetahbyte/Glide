@@ -27,6 +27,7 @@ final class TilingManager {
     private var settleTimer: Timer?
     private var isSettlingSwipe = false
     private var offsets: [AXWindow: CGFloat] = [:]
+    private var appliedAppOrder: [String] = []
     private var reconcileTimer: Timer?
     private var dragTimer: Timer?
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
@@ -36,6 +37,7 @@ final class TilingManager {
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        appliedAppOrder = prefs.appOrder
         AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
         rebuildDisplays()
         adoptExistingWindows()
@@ -101,6 +103,13 @@ final class TilingManager {
     func preferencesChanged() {
         guard isRunning else { return }
         for display in displays { resizeWorkspaces(of: display, to: prefs.workspaceCount) }
+        if prefs.appOrder != appliedAppOrder {
+            appliedAppOrder = prefs.appOrder
+            for display in displays {
+                for workspace in display.workspaces where workspace !== display.active { applyAppOrder(to: workspace) }
+                transition(display) { applyAppOrder(to: display.active) }
+            }
+        }
         layoutAll()
     }
 
@@ -112,6 +121,7 @@ final class TilingManager {
             keep.columns += extra.columns
             keep.floating += extra.floating
         }
+        applyAppOrder(to: keep)
         display.workspaces.removeLast(display.workspaces.count - count)
         display.activeIndex = min(display.activeIndex, count - 1)
     }
@@ -139,6 +149,7 @@ final class TilingManager {
                 let target = fallback.workspaces[min(index, fallback.workspaces.count - 1)]
                 target.columns += workspace.columns
                 target.floating += workspace.floating
+                applyAppOrder(to: target)
                 workspace.allWindows.forEach { parked.removeValue(forKey: $0) }
             }
         }
@@ -268,6 +279,7 @@ final class TilingManager {
             for (window, frame) in (found[display.id] ?? []).sorted(by: { $0.1.minX < $1.1.minX }) {
                 workspace.columns.append(Column(window, width: fraction(forWidth: frame.width, viewport)))
             }
+            applyAppOrder(to: workspace)
             workspace.focused = focused.flatMap { workspace.contains($0) ? $0 : nil } ?? workspace.columns.first?.window
             if let index = workspace.focusedColumnIndex { ensureVisible(index, in: workspace, on: display) }
             layout(display)
@@ -348,11 +360,32 @@ final class TilingManager {
         guard let display = target ?? window.frame.flatMap({ display(containing: CGPoint(x: $0.midX, y: $0.midY)) }) ?? displays.first
         else { return }
         let workspace = display.active
-        let index = workspace.focusedColumnIndex.map { $0 + 1 } ?? workspace.columns.count
+        let index = insertionIndex(for: window, in: workspace)
         workspace.columns.insert(Column(window, width: width), at: index)
         workspace.focused = window
         ensureVisible(index, in: workspace, on: display)
         layout(display)
+    }
+
+    private func appRank(of window: AXWindow) -> Int? {
+        guard let bundleID = NSRunningApplication(processIdentifier: window.pid)?.bundleIdentifier else { return nil }
+        return appliedAppOrder.firstIndex(of: bundleID)
+    }
+
+    // Ranked apps form one block on the left in list order; every other app goes after that block.
+    private func insertionIndex(for window: AXWindow, in workspace: Workspace) -> Int {
+        let ranks = workspace.columns.compactMap { appRank(of: $0.window) }
+        guard let rank = appRank(of: window) else {
+            let nextToFocused = workspace.focusedColumnIndex.map { $0 + 1 } ?? workspace.columns.count
+            return max(nextToFocused, ranks.count)
+        }
+        return ranks.filter { $0 <= rank }.count
+    }
+
+    private func applyAppOrder(to workspace: Workspace) {
+        workspace.columns = workspace.columns.enumerated()
+            .sorted { (appRank(of: $0.element.window) ?? .max, $0.offset) < (appRank(of: $1.element.window) ?? .max, $1.offset) }
+            .map(\.element)
     }
 
     private func forget(_ window: AXWindow) {
@@ -516,14 +549,6 @@ final class TilingManager {
             toggleFloat(window, in: workspace, on: display)
             return
         }
-        if command == .sendToOtherDisplay {
-            sendToOtherDisplay(window, from: display, workspace)
-            return
-        }
-        if case .moveToWorkspace(let number) = command {
-            move(window, toWorkspace: number, on: display)
-            return
-        }
 
         guard let columnIndex = workspace.columnIndex(of: window) else { return }
         let column = workspace.columns[columnIndex]
@@ -612,34 +637,11 @@ final class TilingManager {
             let center = (window.frame?.midX ?? viewport.midX) - viewport.minX + workspace.scroll
             let insertAt = columnCenters(workspace, viewport).filter { $0 < center }.count
             workspace.columns.insert(Column(window, width: Self.newWindowWidth), at: insertAt)
-            ensureVisible(insertAt, in: workspace, on: display)
+            applyAppOrder(to: workspace)
+            ensureVisible(workspace.columnIndex(of: window) ?? insertAt, in: workspace, on: display)
             layout(display)
         }
         workspace.focused = window
-        window.focus()
-    }
-
-    private func sendToOtherDisplay(_ window: AXWindow, from display: Display, _ workspace: Workspace) {
-        guard displays.count > 1, let index = displays.firstIndex(where: { $0 === display }) else { return }
-        let target = displays[(index + 1) % displays.count]
-        let isFloating = workspace.floating.contains(window)
-        let width = workspace.columns.first { $0.window == window }?.width ?? Self.newWindowWidth
-        let frame = window.frame
-        removeFromLayout(window, refocus: false)
-        if isFloating, let frame {
-            let from = viewport(of: display), to = viewport(of: target)
-            let moved = CGRect(
-                x: to.minX + (frame.minX - from.minX) / from.width * to.width,
-                y: to.minY + (frame.minY - from.minY) / from.height * to.height,
-                width: min(frame.width, to.width),
-                height: min(frame.height, to.height)
-            )
-            target.active.floating.append(window)
-            target.active.focused = window
-            place(window, moved.integral, in: nil, to)
-        } else {
-            insert(window, on: target, width: width)
-        }
         window.focus()
     }
 
