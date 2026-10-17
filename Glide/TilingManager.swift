@@ -915,11 +915,11 @@ final class TilingManager {
         if let bounds = scrollBounds(workspace, viewport) { workspace.scroll = max(workspace.scroll, bounds.lowerBound) }
         let left = lefts[index]
         let width = pixelWidth(workspace.columns[index].width, viewport)
-        if width >= viewport.width || left < workspace.scroll {
-            workspace.scroll = left
-        } else if left + width > workspace.scroll + viewport.width {
-            workspace.scroll = left + width - viewport.width
-        }
+        let fullyVisible = left >= workspace.scroll && left + width <= workspace.scroll + viewport.width
+        guard !fullyVisible || width >= viewport.width else { return }
+        let last = workspace.columns.count - 1
+        let end = max(0, lefts[last] + pixelWidth(workspace.columns[last].width, viewport) - viewport.width)
+        workspace.scroll = width >= viewport.width ? left : min(left, end)
     }
 
     private func scrollBounds(_ workspace: Workspace, _ viewport: CGRect) -> ClosedRange<CGFloat>? {
