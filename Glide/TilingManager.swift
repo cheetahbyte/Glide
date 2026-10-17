@@ -14,6 +14,7 @@ final class TilingManager {
     private var screenChangeGeneration = 0
     private var observers: [pid_t: AXObserver] = [:]
     private var dormant: Set<AXWindow> = []
+    private var dormantWidths: [AXWindow: CGFloat] = [:]
     private var parked: [AXWindow: CGRect] = [:]
     private var placed: [AXWindow: CGRect] = [:]
     private var observedWindows: Set<AXWindow> = []
@@ -84,6 +85,7 @@ final class TilingManager {
         displays = []
         offline = []
         dormant = []
+        dormantWidths = [:]
         parked = [:]
         placed = [:]
         observedWindows = []
@@ -377,6 +379,7 @@ final class TilingManager {
             forget(window)
         }
         dormant = dormant.filter { pids.contains($0.pid) && $0.isAlive }
+        dormantWidths = dormantWidths.filter { dormant.contains($0.key) }
         for pid in observers.keys where !pids.contains(pid) {
             appTerminated(pid)
         }
@@ -427,9 +430,10 @@ final class TilingManager {
         return true
     }
 
-    private func insert(_ window: AXWindow, on target: Display? = nil, width: CGFloat = TilingManager.newWindowWidth) {
+    private func insert(_ window: AXWindow, on target: Display? = nil, width: CGFloat? = nil) {
         guard let display = target ?? window.frame.flatMap({ display(containing: CGPoint(x: $0.midX, y: $0.midY)) }) ?? displays.first
         else { return }
+        let width = width ?? dormantWidths.removeValue(forKey: window) ?? Self.newWindowWidth
         let workspace = display.active
         let index = insertionIndex(for: window, in: workspace)
         workspace.columns.insert(Column(window, width: width), at: index)
@@ -461,6 +465,7 @@ final class TilingManager {
 
     private func forget(_ window: AXWindow) {
         dormant.remove(window)
+        dormantWidths.removeValue(forKey: window)
         draggedWindows.remove(window)
         observedWindows.remove(window)
         removeFromLayout(window, refocus: true)
@@ -470,6 +475,9 @@ final class TilingManager {
     }
 
     private func makeDormant(_ window: AXWindow) {
+        if let width = location(of: window)?.1.columns.first(where: { $0.window == window })?.width {
+            dormantWidths[window] = width
+        }
         removeFromLayout(window, refocus: false)
         parked.removeValue(forKey: window)
         floatingFrames.removeValue(forKey: window)
