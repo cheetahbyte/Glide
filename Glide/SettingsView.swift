@@ -1,10 +1,41 @@
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
-struct SettingsView: View {
+enum SettingsPane: CaseIterable {
+    case general, layout, shortcuts, trackpad
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .layout: "Layout"
+        case .shortcuts: "Shortcuts"
+        case .trackpad: "Trackpad"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .layout: "rectangle.split.3x1"
+        case .shortcuts: "keyboard"
+        case .trackpad: "hand.draw"
+        }
+    }
+
+    var view: AnyView {
+        switch self {
+        case .general: AnyView(GeneralSettings().frame(width: 560, height: 220))
+        case .layout: AnyView(LayoutSettings().frame(width: 560, height: 480))
+        case .shortcuts: AnyView(ShortcutSettings().frame(width: 560, height: 480))
+        case .trackpad: AnyView(TrackpadSettings().frame(width: 560, height: 320))
+        }
+    }
+}
+
+struct GeneralSettings: View {
     @ObservedObject var prefs = Preferences.shared
     @State private var trusted = SystemSetup.isAccessibilityTrusted
-    @State private var swipeConflict = false
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -20,16 +51,23 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Shortcuts") {
-                Picker("Shortcuts start with", selection: $prefs.modifier) {
-                    ForEach(ModifierChoice.allCases) { Text($0.title).tag($0) }
+            Section("Workspaces") {
+                Stepper(value: $prefs.workspaceCount, in: 1...Preferences.maxWorkspaces) {
+                    LabeledContent("Workspaces per display", value: "\(prefs.workspaceCount)")
                 }
-                ShortcutList(modifier: prefs.modifier, workspaceCount: prefs.workspaceCount)
-                Text("H and L work in place of ← and → in every shortcut.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+        .onAppear { trusted = SystemSetup.isAccessibilityTrusted }
+        .onReceive(poll) { _ in trusted = SystemSetup.isAccessibilityTrusted }
+    }
+}
 
+struct LayoutSettings: View {
+    @ObservedObject var prefs = Preferences.shared
+
+    var body: some View {
+        Form {
             Section("Layout") {
                 LabeledContent("Space between windows") {
                     HStack {
@@ -42,6 +80,39 @@ struct SettingsView: View {
                 }
             }
 
+            AppOrderSection(order: $prefs.appOrder)
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct ShortcutSettings: View {
+    @ObservedObject var prefs = Preferences.shared
+
+    var body: some View {
+        Form {
+            Section("Shortcuts") {
+                Picker("Shortcuts start with", selection: $prefs.modifier) {
+                    ForEach(ModifierChoice.allCases) { Text($0.title).tag($0) }
+                }
+                ShortcutList(modifier: prefs.modifier, workspaceCount: prefs.workspaceCount)
+                Text("H and L work in place of ← and → in every shortcut.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct TrackpadSettings: View {
+    @ObservedObject var prefs = Preferences.shared
+    @State private var swipeConflict = false
+
+    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Form {
             Section("Trackpad") {
                 Toggle("Slide the row with a swipe", isOn: $prefs.swipeEnabled)
                 Picker("Fingers", selection: $prefs.swipeFingers) {
@@ -53,23 +124,14 @@ struct SettingsView: View {
                     SwipeConflictNote(fingers: prefs.swipeFingers)
                 }
             }
-
-            Section("Workspaces") {
-                Stepper(value: $prefs.workspaceCount, in: 1...Preferences.maxWorkspaces) {
-                    LabeledContent("Workspaces per display", value: "\(prefs.workspaceCount)")
-                }
-            }
         }
         .formStyle(.grouped)
-        .frame(width: 560)
-        .frame(minHeight: 520)
         .onAppear(perform: refresh)
         .onReceive(poll) { _ in refresh() }
         .onChange(of: prefs.swipeFingers) { _ in refresh() }
     }
 
     private func refresh() {
-        trusted = SystemSetup.isAccessibilityTrusted
         swipeConflict = SystemSetup.systemUsesHorizontalSwipe(fingers: prefs.swipeFingers)
     }
 }
@@ -126,5 +188,77 @@ struct SwipeConflictNote: View {
                 .foregroundStyle(.secondary)
             Button("Open Trackpad Settings…") { SystemSetup.openTrackpadSettings() }
         }
+    }
+}
+
+struct AppOrderSection: View {
+    @Binding var order: [String]
+
+    var body: some View {
+        Section {
+            ForEach(order, id: \.self) { bundleID in
+                HStack {
+                    Image(nsImage: AppInfo.icon(bundleID))
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                    Text(AppInfo.name(bundleID))
+                    Spacer()
+                    Button {
+                        order.removeAll { $0 == bundleID }
+                    } label: {
+                        Image(systemName: "minus.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove from the order")
+                }
+            }
+            .onMove { order.move(fromOffsets: $0, toOffset: $1) }
+            Menu("Add App") {
+                ForEach(AppInfo.runningApps(excluding: order), id: \.self) { bundleID in
+                    Button(AppInfo.name(bundleID)) { order.append(bundleID) }
+                }
+                Divider()
+                Button("Choose…", action: chooseApp)
+            }
+            .fixedSize()
+        } header: {
+            Text("App order")
+        } footer: {
+            Text("Windows of these apps always line up from left to right in this order. Drag to rearrange. Other apps open next to the focused window.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bundleID = Bundle(url: url)?.bundleIdentifier, !order.contains(bundleID) else { return }
+        order.append(bundleID)
+    }
+}
+
+enum AppInfo {
+    static func name(_ bundleID: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+
+    static func icon(_ bundleID: String) -> NSImage {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            return NSWorkspace.shared.icon(for: .application)
+        }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    static func runningApps(excluding: [String]) -> [String] {
+        let own = Bundle.main.bundleIdentifier
+        let ids = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .compactMap(\.bundleIdentifier)
+            .filter { $0 != own && !excluding.contains($0) }
+        return Array(Set(ids)).sorted { name($0).localizedCaseInsensitiveCompare(name($1)) == .orderedAscending }
     }
 }

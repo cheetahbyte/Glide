@@ -169,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @objc private func showSettings() {
         if settingsWindow == nil {
-            settingsWindow = makeWindow(title: "Glide Settings", content: SettingsView())
+            settingsWindow = makeSettingsWindow()
         }
         present(settingsWindow)
     }
@@ -183,6 +183,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             })
         }
         present(setupWindow)
+    }
+
+    private func makeSettingsWindow() -> NSWindow {
+        let tabs = NSTabViewController()
+        tabs.tabStyle = .toolbar
+        for pane in SettingsPane.allCases {
+            let hosting = NSHostingController(rootView: pane.view)
+            hosting.sizingOptions = [.preferredContentSize]
+            let item = NSTabViewItem(viewController: hosting)
+            item.label = pane.title
+            item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
+            tabs.addTabViewItem(item)
+        }
+        let window = NSWindow(contentViewController: tabs)
+        window.styleMask = [.titled, .closable]
+        window.toolbarStyle = .preference
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        return window
     }
 
     private func makeWindow<Content: View>(title: String, content: Content) -> NSWindow {
